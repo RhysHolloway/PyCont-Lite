@@ -399,7 +399,8 @@ This makes it easy to explore and plot bifurcation diagrams programmatically.
 ## Planned Features
 The following features are under active consideration for future releases:
 - Complete backend-agnostic implementation
-- Choice of finite-differences or external automatic differentiation for gradients.
+- Choice between finite-differences and explicit user-specified Jacobians
+- Features for external automatic differentiation for gradients.
 
 ## License
 
