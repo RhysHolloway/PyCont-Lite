@@ -103,6 +103,7 @@ def continuation(G : Callable[[np.ndarray, float], np.ndarray],
 
 			# Corrector
 			with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
+				print('computing newton')
 				try:
 					x_new = opt.newton_krylov(F, x_p, f_tol=a_tol, rdiff=r_diff, maxiter=max_it, verbose=False)
 				except opt.NoConvergence as e:
@@ -114,6 +115,7 @@ def continuation(G : Callable[[np.ndarray, float], np.ndarray],
 				ds = min(1.2*ds, ds_max)
 				break
 			else:
+				print('decreasing ds to ', 0.5*ds)
 				ds = max(0.5*ds, ds_min)
 
 		else:

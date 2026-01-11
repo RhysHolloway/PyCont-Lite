@@ -168,8 +168,10 @@ def pseudoArclengthContinuation(G : Callable[[np.ndarray, float], np.ndarray],
     with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
         try:
             u1 = opt.newton_krylov(lambda uu: G(uu, p0 + rdiff), u0, f_tol=tolerance, rdiff=rdiff, maxiter=nk_maxiter)
-        except opt.NoConvergence:
-            raise InputError("Initial tangent computation failed.")
+        except opt.NoConvergence as e:
+            LOG.info(f'Initial Tangent Computation Failed with Relative Error = {lg.norm(G(e.args[0], p0 + rdiff)) / lg.norm(u0)}')
+            u1 = e.args[0]
+            #raise InputError("Initial tangent computation failed.")
     initial_tangent = (u1 - u0) / rdiff
     initial_tangent = np.append(initial_tangent, 1.0); initial_tangent = initial_tangent / lg.norm(initial_tangent)
     tangent = computeTangent(G, u0, p0, initial_tangent, sp)
@@ -179,7 +181,6 @@ def pseudoArclengthContinuation(G : Callable[[np.ndarray, float], np.ndarray],
 
     # Make a list of which directions to explore (increase_p, decrease_p or both)
     mode = sp.setdefault("initial_directions", "both").lower()
-    mode = mode.lower()
     if mode == "both" or tangent[M] == 0.0: # Edge case if we start on a fold point
         dirs = [tangent, -tangent]
     elif mode == "increase_p":
