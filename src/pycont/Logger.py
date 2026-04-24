@@ -1,4 +1,5 @@
 import sys, threading
+from collections.abc import Callable
 from enum import IntEnum
 
 from typing import TextIO, Union
@@ -7,6 +8,8 @@ class Verbosity(IntEnum):
     OFF = 0
     INFO = 1
     VERBOSE = 2
+
+Message = Union[str, Callable[[], str]]
 
 class Logger:
     """Barebones, always-prints-to-screen (or given stream). Thread-safe."""
@@ -27,16 +30,23 @@ class Logger:
         return level <= self._verbosity
 
     # emit
-    def log(self, msg: str, level: Verbosity = Verbosity.INFO) -> None:
-        if self.enabled(level):
-            with self._lock:
-                print(msg, file=self._stream, flush=True)
+    def log(self, msg: Message, level: Verbosity = Verbosity.INFO) -> None:
+        if not self.enabled(level):
+            return
+
+        text = msg() if callable(msg) else msg
+        rendered = str(text)
+        with self._lock:
+            self._stream.write(rendered)
+            if not rendered.endswith("\n"):
+                self._stream.write("\n")
+            self._stream.flush()
 
     # convenience
-    def info(self, msg: str) -> None:
+    def info(self, msg: Message) -> None:
         self.log(msg, Verbosity.INFO)
 
-    def verbose(self, msg: str) -> None:
+    def verbose(self, msg: Message) -> None:
         self.log(msg, Verbosity.VERBOSE)
 
 def coerce_verbosity(v) -> Verbosity:

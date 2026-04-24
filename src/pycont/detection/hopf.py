@@ -36,7 +36,7 @@ class HopfDetectionModule(DetectionModule):
         if self.M < 2:
             raise InputError(f"Can't do Hopf detection on one-dimensional systems.")
         self.n_hopf_eigenvalues = sp.get("n_hopf_eigenvalues", min(6, self.M))
-        LOG.verbose(f'Hopf detector {self.n_hopf_eigenvalues}.')
+        LOG.verbose(lambda: f'Hopf detector {self.n_hopf_eigenvalues}.')
 
     def initializeBranch(self,
                          x : np.ndarray,
@@ -58,7 +58,7 @@ class HopfDetectionModule(DetectionModule):
         # If we passed a Hopf point, return True for localization.
         is_hopf = detectHopf(self.prev_state.eigvals, self.new_state.eigvals, self.prev_state.lead, self.new_state.lead)
         if self.in_confident_region and is_hopf:
-            LOG.info(f"Hopf Point Detected near {x_new}.")
+            LOG.info(lambda: f"Hopf Point Detected near {x_new}.")
             return True
         
         # Else, update the internal state
@@ -67,7 +67,7 @@ class HopfDetectionModule(DetectionModule):
         return False
     
     def localize(self) -> Optional[np.ndarray]:
-        LOG.info(f"Localizing the Hopf Point")
+        LOG.info("Localizing the Hopf Point")
 
         prev_lead_index = self.prev_state.lead
         prev_eigval = self.prev_state.eigvals[prev_lead_index]
@@ -86,7 +86,7 @@ class HopfDetectionModule(DetectionModule):
                                                                            self.M, 
                                                                            self.sp)
         if is_hopf:
-            LOG.info(f'Hopf Point localized at {hopf_point}')
+            LOG.info(lambda: f'Hopf Point localized at {hopf_point}')
             self.omega_hopf = np.imag(lam_hopf)
             self.w_hopf = np.copy(w_hopf)
             return hopf_point

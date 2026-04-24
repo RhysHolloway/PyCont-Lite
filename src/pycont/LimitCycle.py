@@ -3,6 +3,7 @@ import scipy.optimize as opt
 import math
 
 from .Logger import LOG
+from ._optimize import quiet_newton_krylov
 
 from typing import Callable, Dict, Tuple, Optional
 
@@ -156,7 +157,7 @@ def calculateInitialLimitCycle(G : Callable[[np.ndarray, float], np.ndarray],
     p_init = p_hopf + rho**2
     rms = math.sqrt(M * L + 1.0)
     try:
-        QLC = opt.newton_krylov(lambda Q : initialObjective(Q, p_init), Q_init, f_tol=6.e-6 * rms, rdiff=sp["rdiff"], maxiter=50)
+        QLC = quiet_newton_krylov(lambda Q : initialObjective(Q, p_init), Q_init, f_tol=6.e-6 * rms, rdiff=sp["rdiff"], maxiter=50)
         if QLC[-1] < 0.0 or np.any(np.isnan(QLC)) or np.any(np.isinf(QLC)):
             raise ValueError()
         return QLC[:-1], QLC[-1], p_init
@@ -168,7 +169,7 @@ def calculateInitialLimitCycle(G : Callable[[np.ndarray, float], np.ndarray],
     # If it failed, try a negative guess
     p_init = p_hopf - rho**2
     try:
-        QLC = opt.newton_krylov(lambda Q : initialObjective(Q, p_init), Q_init, f_tol=6.e-6 * rms, rdiff=sp["rdiff"], maxiter=50)
+        QLC = quiet_newton_krylov(lambda Q : initialObjective(Q, p_init), Q_init, f_tol=6.e-6 * rms, rdiff=sp["rdiff"], maxiter=50)
     except opt.NoConvergence:
         LOG.info('Initializing the Limit Cylce failed. Not donig limit cycle continuation around this Hopf point.')
         return None

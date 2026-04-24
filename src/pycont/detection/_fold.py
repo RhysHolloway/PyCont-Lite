@@ -3,6 +3,7 @@ import scipy.optimize as opt
 
 from ..Tangent import computeTangent
 from ..Logger import LOG
+from .._optimize import quiet_newton_krylov
 
 from typing import Callable, Dict, Tuple
 
@@ -49,12 +50,12 @@ def computeFoldPoint(G : Callable[[np.ndarray, float], np.ndarray],
 	def finalTangentComponent(alpha):
 		F = make_F_ext(alpha)
 		with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
-			x_alpha = opt.newton_krylov(F, x_left, rdiff=rdiff)
+			x_alpha = quiet_newton_krylov(F, x_left, rdiff=rdiff)
 		tangent = computeTangent(G, x_alpha[0:M], x_alpha[M], tangent_ref, sp)
 		return tangent[M]
 	
 	try:
-		LOG.verbose(f'BrentQ edge values {finalTangentComponent(-1.0)},  {finalTangentComponent(2.0)}')
+		LOG.verbose(lambda: f'BrentQ edge values {finalTangentComponent(-1.0)},  {finalTangentComponent(2.0)}')
 		alpha_fold, result = opt.brentq(finalTangentComponent, -2.0, 2.0, full_output=True, disp=False)
 	except ValueError: # No sign change detected
 		return False, x_right, 1.0

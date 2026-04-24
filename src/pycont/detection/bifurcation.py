@@ -95,7 +95,7 @@ class BifurcationDetectionModule(DetectionModule):
         is_bf =  (w_values * self.prev_state.w_values < 0.0) & (np.abs(self.prev_state.w_values) < 1000.0) & (np.abs(w_values) < 1000.0)
         if np.any(is_bf):
             index = np.where(is_bf)[0].min()
-            LOG.info(f'Sign change detected {self.prev_state.w_values} {self.new_state.w_values} {index}')
+            LOG.info(lambda: f'Sign change detected {self.prev_state.w_values} {self.new_state.w_values} {index}')
             self.F_bf = F
             return True
         
@@ -115,7 +115,7 @@ class BifurcationDetectionModule(DetectionModule):
                                                         self.M, 
                                                         self.sp)
         if is_bf:
-            LOG.info(f'Bifurcation Point at {x_bf}')
+            LOG.info(lambda: f'Bifurcation Point at {x_bf}')
             return x_bf
         
         LOG.info('Erroneous sign change in bifurcation detection, most likely due to blowup. Continuing along this branch.')

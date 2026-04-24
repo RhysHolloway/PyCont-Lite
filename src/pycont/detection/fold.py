@@ -48,7 +48,7 @@ class FoldDetectionModule(DetectionModule):
     def localize(self) -> Optional[np.ndarray]:
         is_fold, x_fold, _ = computeFoldPoint(self.G, self.prev_state.x, self.new_state.x, self.prev_state.tangent, self.sp)
         if is_fold:
-            LOG.info(f'Fold point at {x_fold}')
+            LOG.info(lambda: f'Fold point at {x_fold}')
             return x_fold
         
         LOG.info('Erroneous Fold Point detection due to blow-up in tangent vector.')

@@ -7,6 +7,7 @@ from .detection import DetectionModule
 
 from .Types import Branch, Event
 from .Logger import LOG
+from ._optimize import quiet_newton_krylov
 
 from typing import Callable, Tuple, Dict, Any, List
 
@@ -82,8 +83,7 @@ def continuation(G : Callable[[np.ndarray, float], np.ndarray],
 	s = 0.0
 	tangent = initial_tangent / lg.norm(initial_tangent)
 	branch = Branch(branch_id, n_steps, u0, p0)
-	print_str = f"Step n: {0:3d}\t u: {lg.norm(u0):.4f}\t p: {p0:.4f}\t s: {s:.4f}\t t_p: {tangent[M]:.4f}"
-	LOG.info(print_str)
+	LOG.info(lambda: f"Step n: {0:3d}\t u: {lg.norm(u0):.4f}\t p: {p0:.4f}\t s: {s:.4f}\t t_p: {tangent[M]:.4f}")
 
 	# Initialize all detection modules
 	for module in detectionModules:
@@ -105,7 +105,7 @@ def continuation(G : Callable[[np.ndarray, float], np.ndarray],
 			with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
 				LOG.verbose('computing newton')
 				try:
-					x_new = opt.newton_krylov(F, x_p, f_tol=a_tol, rdiff=r_diff, maxiter=max_it, verbose=False)
+					x_new = quiet_newton_krylov(F, x_p, f_tol=a_tol, rdiff=r_diff, maxiter=max_it)
 				except opt.NoConvergence as e:
 					x_new = e.args[0]
 			nk_residual = lg.norm(F(x_new))
@@ -115,7 +115,7 @@ def continuation(G : Callable[[np.ndarray, float], np.ndarray],
 				ds = min(1.2*ds, ds_max)
 				break
 			else:
-				LOG.verbose(f'decreasing ds to {0.5*ds}')
+				LOG.verbose(lambda: f'decreasing ds to {0.5*ds}')
 				ds = max(0.5*ds, ds_min)
 
 		else:
@@ -156,8 +156,7 @@ def continuation(G : Callable[[np.ndarray, float], np.ndarray],
 		branch.addPoint(x, s)
 		
 		# Print the status
-		print_str = f"Step n: {n:3d}\t u: {lg.norm(x[0:M]):.4f}\t p: {x[M]:.4f}\t s: {s:.4f}\t t_p: {tangent[M]:.4f}"
-		LOG.info(print_str)
+		LOG.info(lambda: f"Step n: {n:3d}\t u: {lg.norm(x[0:M]):.4f}\t p: {x[M]:.4f}\t s: {s:.4f}\t t_p: {tangent[M]:.4f}")
 
 	termination_event = Event("MAXSTEPS", branch.u_path[-1,:], branch.p_path[-1], branch.s_path[-1])
 	branch.termination_event = termination_event

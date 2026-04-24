@@ -11,6 +11,7 @@ from .Types import ContinuationResult, Event
 from .exceptions import InputError
 from .Tangent import computeTangent
 from .Logger import LOG, Verbosity, configureLOG
+from ._optimize import quiet_newton_krylov
 
 from typing import Callable, Optional, Dict, Any, List
 
@@ -172,9 +173,9 @@ def pseudoArclengthContinuation(G : Callable[[np.ndarray, float], np.ndarray],
     LOG.info('\nComputing Initial Tangent to the Branch.')
     with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
         try:
-            u1 = opt.newton_krylov(lambda uu: G(uu, p0 + rdiff), u0, f_tol=tolerance, rdiff=rdiff, maxiter=nk_maxiter)
+            u1 = quiet_newton_krylov(lambda uu: G(uu, p0 + rdiff), u0, f_tol=tolerance, rdiff=rdiff, maxiter=nk_maxiter)
         except opt.NoConvergence as e:
-            LOG.info(f'Initial Tangent Computation Failed with Relative Error = {lg.norm(G(e.args[0], p0 + rdiff)) / lg.norm(u0)}')
+            LOG.info(lambda: f'Initial Tangent Computation Failed with Relative Error = {lg.norm(G(e.args[0], p0 + rdiff)) / lg.norm(u0)}')
             u1 = e.args[0]
             #raise InputError("Initial tangent computation failed.")
     initial_tangent = (u1 - u0) / rdiff
@@ -266,7 +267,7 @@ def _recursiveContinuation(G : Callable[[np.ndarray, float], np.ndarray],
     Nothing, but `result` is updated with the new branche(s) and possible bifurcation points.
     """
     branch_id = len(result.branches)
-    LOG.info(f'\n\nContinuation on Branch {branch_id + 1}')
+    LOG.info(lambda: f'\n\nContinuation on Branch {branch_id + 1}')
     M = len(u0)
     
     # Do regular continuation on this branch
@@ -328,7 +329,7 @@ def _recursiveContinuation(G : Callable[[np.ndarray, float], np.ndarray],
         # Add a tiny jump so we don't rediscover the same Hopf point again. Also project back to the path
         x_init = x_hopf + sp["s_jump"] * tangent
         p_init = x_init[M]
-        u_init = opt.newton_krylov(lambda u : G(u, p_init), x_init[0:M], rdiff=sp["rdiff"], maxiter=sp["nk_maxiter"])
+        u_init = quiet_newton_krylov(lambda u : G(u, p_init), x_init[0:M], rdiff=sp["rdiff"], maxiter=sp["nk_maxiter"])
         new_tangent = computeTangent(G, u_init, p_init, tangent, sp)
         _recursiveContinuation(G, u_init, p_init, new_tangent, ds_min, ds_max, ds, n_steps, sp, termination_event_index, detectionModules, result)
 
@@ -405,10 +406,10 @@ def _limitCylceContinuation(G : Callable[[np.ndarray, float], np.ndarray],
     LOG.verbose('Solving initial LC again with new objective function')
     rdiff = sp["rdiff"]
     try:
-        Q_init = opt.newton_krylov(lambda q : G_lc(q, lc_p_init), Q_init, rdiff=rdiff, f_tol=1e-4, maxiter=50)
+        Q_init = quiet_newton_krylov(lambda q : G_lc(q, lc_p_init), Q_init, rdiff=rdiff, f_tol=1e-4, maxiter=50)
     except opt.NoConvergence as e:
         Q_init = e.args[0]
-    LOG.verbose(f'More accurate initial limit cycle: {Q_init}')
+    LOG.verbose(lambda: f'More accurate initial limit cycle: {Q_init}')
 
     # Calculate the iniital tangent along this branch. 
     LOG.info('\nComputing Initial Tangent to the Limit Cycle Branch.')
@@ -416,14 +417,14 @@ def _limitCylceContinuation(G : Callable[[np.ndarray, float], np.ndarray],
     p1 = lc_p_init + 0.01*p_dir
     with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
         try:
-            Q1 = opt.newton_krylov(lambda q: G_lc(q, p1), Q_init, rdiff=rdiff, f_tol=1e-4, maxiter=50)
+            Q1 = quiet_newton_krylov(lambda q: G_lc(q, p1), Q_init, rdiff=rdiff, f_tol=1e-4, maxiter=50)
         except opt.NoConvergence as e:
             Q1 = e.args[0]
     initial_tangent = (Q1 - Q_init) / (p1 - lc_p_init)
     initial_tangent = np.append(initial_tangent, p_dir); initial_tangent = initial_tangent / lg.norm(initial_tangent)
     tangent = computeTangent(G_lc, Q_init, lc_p_init, initial_tangent, sp, high_accuracy=False)
-    LOG.verbose(f'tangent final component {tangent[-1]}')
-    LOG.verbose(f'Initial G value {lg.norm(G_lc(Q1, p1))}')
+    LOG.verbose(lambda: f'tangent final component {tangent[-1]}')
+    LOG.verbose(lambda: f'Initial G value {lg.norm(G_lc(Q1, p1))}')
     
     # Perform limit cycle continuation - ony keep param_min and param_max detection modules.
     lcDetectionModules = []

@@ -3,6 +3,7 @@ import scipy.sparse.linalg as slg
 import scipy.optimize as opt
 
 from ..Logger import LOG
+from .._optimize import quiet_newton_krylov
 
 from typing import Callable, Dict, Tuple
 
@@ -85,7 +86,7 @@ def initializeHopf(G: Callable[[np.ndarray, float], np.ndarray],
     lead : int
         The index of the leading eigenvalue - the one closest to the imaginary axis.
     """
-    LOG.verbose(f"Initializing Hopf")
+    LOG.verbose("Initializing Hopf")
     omega_min = 1e-3
 
     # Create JVP
@@ -111,7 +112,7 @@ def initializeHopf(G: Callable[[np.ndarray, float], np.ndarray],
     lead = _pick_near_axis(eigvals, omega_min)
     if lead != -1 and np.abs(np.real(eigvals[lead])) < 1e-10:
         eigvals[lead] = 1j * np.imag(eigvals[lead])
-    LOG.verbose(f'eigvals{eigvals}')
+    LOG.verbose(lambda: f'eigvals{eigvals}')
 
     return eigvals, V, lead
 
@@ -153,10 +154,8 @@ def _JacobiDavidson(J : Callable[[np.ndarray], np.ndarray],
     M = len(v0)
     if tolerance == 'accurate':
         tol = 1e-4
-        verbose=True
     else: # 1 NK step = 1 LGMRES solve but better.
         tol = 1e-3
-        verbose=False
 
     v = np.copy(v0)
     lam = lam0
@@ -172,21 +171,21 @@ def _JacobiDavidson(J : Callable[[np.ndarray], np.ndarray],
         P = lambda w : w - v * np.vdot(v, w)
         J_reduced = lambda w : P(J_mv(P(w)))
         try:
-            s = opt.newton_krylov(lambda w : J_reduced(w) + P(r), np.zeros_like(v), f_tol=tol, verbose=verbose)
+            s = quiet_newton_krylov(lambda w : J_reduced(w) + P(r), np.zeros_like(v), f_tol=tol)
         except opt.NoConvergence as e:
             s = e.args[0]
         except:
             # Solve using L-GMRES if newton_krylov fails
-            print('lgmres')
+            LOG.verbose('Falling back to LGMRES in Jacobi-Davidson')
             s, info = slg.lgmres(slg.LinearOperator((M,M), J_reduced), -P(r), atol=tol)
-        LOG.verbose(f"JD Residual {np.linalg.norm(J_reduced(s)+P(r))}")
+        LOG.verbose(lambda: f"JD Residual {np.linalg.norm(J_reduced(s)+P(r))}")
 
         # Update the eigenvector and eigenvalue
         v = v + P(s)
         v /= np.linalg.norm(v)
         lam = np.vdot(v, J(v))
 
-    LOG.verbose(f"Eigenvalue after Jacobi-Davidson {lam}")
+    LOG.verbose(lambda: f"Eigenvalue after Jacobi-Davidson {lam}")
 
     # Return the latest eigenvalue and eigenvector
     return lam, v
@@ -249,7 +248,7 @@ def refreshHopfJacobiDavidson(G: Callable[[np.ndarray, float], np.ndarray],
 
     # Pick lead complex eigenvalue closest to imaginary axis
     lead = _pick_near_axis(eigvals_new, omega_min)  # returns -1 if none
-    LOG.verbose(f'Hopf Value {eigvals_new[lead]}')
+    LOG.verbose(lambda: f'Hopf Value {eigvals_new[lead]}')
 
     return eigvals_new, eigvecs_new, lead
 
@@ -318,7 +317,7 @@ def refreshHopf(G: Callable[[np.ndarray, float], np.ndarray],
         w, info = slg.lgmres(A, v0, x0=v0, maxiter=8)
         residual = np.linalg.norm(A_mv(w) - v0)
         v_new = w / (np.linalg.norm(w) + 1e-16)
-        LOG.verbose(f'Hopf LGRMES Resisdual {residual}')
+        LOG.verbose(lambda: f'Hopf LGRMES Resisdual {residual}')
 
         # Rayleigh quotient update
         Jv_v_new = Jv(v_new)
@@ -328,7 +327,7 @@ def refreshHopf(G: Callable[[np.ndarray, float], np.ndarray],
 
     # Pick lead complex eigenvalue closest to imaginary axis
     lead = _pick_near_axis(eigvals_new, omega_min)  # returns -1 if none
-    LOG.verbose(f'Hopf Value {eigvals_new[lead]}')
+    LOG.verbose(lambda: f'Hopf Value {eigvals_new[lead]}')
 
     return eigvals_new, eigvecs_new, lead
 
@@ -432,7 +431,7 @@ def localizeHopfJacobiDavidson(G : Callable[[np.ndarray, float], np.ndarray],
     def realPartHopfEigenvalue(alpha : float) -> float:
         # Compute the Rayleigh coefficient and return its real part
         lam, _ = hopfEigenpair(alpha)
-        LOG.verbose(f'Hopf Eigenvalue {np.real(lam)} at alpha = {alpha}')
+        LOG.verbose(lambda: f'Hopf Eigenvalue {np.real(lam)} at alpha = {alpha}')
         return np.real(lam)
     
     # Use the BrentQ algorithm to find the alpha for which lambda is zero in real part. 

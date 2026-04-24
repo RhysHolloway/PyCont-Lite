@@ -2,6 +2,7 @@ import numpy as np
 import scipy.optimize as opt
 
 from ..Logger import LOG
+from .._optimize import quiet_newton_krylov
 
 from typing import Callable, Tuple, Dict
 
@@ -49,10 +50,10 @@ def test_fn_jacobian(F : Callable[[np.ndarray], np.ndarray],
         return (F(x + eps * w) - F(x - eps * w)) / (2.0*eps) - r
 
     with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
-        w_solution = opt.newton_krylov(matvec, w_prev, rdiff=rdiff, verbose=False)
+        w_solution = quiet_newton_krylov(matvec, w_prev, rdiff=rdiff)
     residual = np.linalg.norm(matvec(w_solution))
     beta = -1.0 / np.dot(l, w_solution)
-    LOG.verbose(f'Jacobian test FN = {beta}, residual = {residual}')
+    LOG.verbose(lambda: f'Jacobian test FN = {beta}, residual = {residual}')
 
     return w_solution, beta
 
@@ -161,15 +162,15 @@ def computeBifurcationPoint(F : Callable[[np.ndarray], np.ndarray],
 
         # Solve the linear system to obtain beta = z_solution[-1]
         with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
-            z_solution = opt.newton_krylov(bordered_matvec, z0, rdiff=rdiff)
-        LOG.verbose(f'Linear Bifurcation residual {np.linalg.norm(bordered_matvec(z_solution))}')
+            z_solution = quiet_newton_krylov(bordered_matvec, z0, rdiff=rdiff)
+        LOG.verbose(lambda: f'Linear Bifurcation residual {np.linalg.norm(bordered_matvec(z_solution))}')
         beta = z_solution[M+1]
 
         return beta
     
     # Solve beta = 0. This is the location of the bifurcation point.
     try:
-        LOG.verbose(f'BrentQ edge values {BFObjective(0.0)},  {BFObjective(1.0)}')
+        LOG.verbose(lambda: f'BrentQ edge values {BFObjective(0.0)},  {BFObjective(1.0)}')
         alpha_singular, result = opt.brentq(BFObjective, 0.0, 1.0, full_output=True, disp=False)
     except ValueError: # No sign change detected
         LOG.verbose('Value error caught')

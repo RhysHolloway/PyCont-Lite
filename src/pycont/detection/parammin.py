@@ -6,6 +6,7 @@ from pycont.Types import Event
 from .base import DetectionModule, ObjectiveType
 from ..Logger import LOG
 from ..exceptions import InputError
+from .._optimize import quiet_newton_krylov
 
 from typing import Dict, Any, Callable, Optional
 
@@ -64,7 +65,7 @@ class ParamMinDetectionModule(DetectionModule):
 
         # Return true if we passed `param_max`. Otherwise update the internal state.
         if self.p_new < self.param_min_value and self.p_prev >= self.param_min_value:
-            LOG.info(f'Stopping Continuation Along this Branch. PARAM_MIN {self.param_min_value} reached.')
+            LOG.info(lambda: f'Stopping Continuation Along this Branch. PARAM_MIN {self.param_min_value} reached.')
             return True
         
         self.u_prev = self.u_new
@@ -83,7 +84,7 @@ class ParamMinDetectionModule(DetectionModule):
         rdiff = self.sp["rdiff"]
         tolerance = self.sp["tolerance"]
         try:
-            u_param_min = opt.newton_krylov(objective, u_guess, rdiff=rdiff, f_tol=tolerance)
+            u_param_min = quiet_newton_krylov(objective, u_guess, rdiff=rdiff, f_tol=tolerance)
         except opt.NoConvergence as e:
             u_param_min = e.args[0]
 

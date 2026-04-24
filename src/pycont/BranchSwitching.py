@@ -3,6 +3,7 @@ import scipy.linalg as lg
 import scipy.optimize as opt
 
 from .Logger import LOG
+from ._optimize import quiet_newton_krylov
 
 from typing import Callable, List, Tuple, Dict
 
@@ -215,7 +216,7 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
 
         tangent = np.append(alpha*phi + beta/np.sqrt(1.0)*w, beta/np.sqrt(1.0))
         x0 = x_singular + sp["s_jump"] * tangent / lg.norm(tangent)
-        dir = opt.newton_krylov(F_branch, x0, rdiff=sp["rdiff"], f_tol=sp["tolerance"])
+        dir = quiet_newton_krylov(F_branch, x0, rdiff=sp["rdiff"], f_tol=sp["tolerance"])
 
         directions.append(dir)
         tangents.append(tangent)
@@ -229,7 +230,7 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
             idx = n
     directions.pop(idx)
     tangents.pop(idx)
-    LOG.info(f'Branch Switching Tangents: {tangents}')
+    LOG.info(lambda: f'Branch Switching Tangents: {tangents}')
 
     # Returning 3 continuation directions
     return directions, tangents
