@@ -7,6 +7,26 @@ from ._optimize import quiet_newton_krylov
 
 from typing import Callable, Dict, Tuple, Optional
 
+def _evaluate_time_slices(G : Callable[[np.ndarray, float], np.ndarray],
+                          X : np.ndarray,
+                          p : float) -> np.ndarray:
+    """Evaluate G column-wise, using a vectorized G implementation when available."""
+    try:
+        values = np.asarray(G(X, p))
+        if values.shape == X.shape:
+            return values
+    except Exception:
+        pass
+
+    first_value = np.asarray(G(X[:,0], p)).reshape(-1)
+    if first_value.size != X.shape[0]:
+        raise ValueError(f"Expected G to return {X.shape[0]} values, got {first_value.size}.")
+    values = np.empty(X.shape, dtype=first_value.dtype)
+    values[:,0] = first_value
+    for index in range(1, X.shape[1]):
+        values[:,index] = np.asarray(G(X[:,index], p)).reshape(-1)
+    return values
+
 def buildODEObjective(G : Callable[[np.ndarray, float], np.ndarray],
                       dtau : float,
                       M : int,
@@ -35,7 +55,7 @@ def buildODEObjective(G : Callable[[np.ndarray, float], np.ndarray],
         U_shifted = np.roll(U, shift=-1, axis=1)
 
         X_alpha = 0.5 * (U + U_shifted)
-        G_alpha = np.apply_along_axis(lambda u: G(u, p), 0, X_alpha)
+        G_alpha = _evaluate_time_slices(G, X_alpha, p)
 
         R = U_shifted - U - dtau * T * G_alpha
         return R.flatten('F')

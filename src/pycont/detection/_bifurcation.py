@@ -148,7 +148,12 @@ def computeBifurcationPoint(F : Callable[[np.ndarray], np.ndarray],
         z0 = np.copy(w)
 
     # Build the Bisection Objective Function
+    beta_cache: Dict[float, float] = {}
     def BFObjective(alpha : float) -> float:
+        cached_beta = beta_cache.get(float(alpha))
+        if cached_beta is not None:
+            return cached_beta
+
         x = x_left + alpha * x_diff
         
         # Build the linear system
@@ -158,13 +163,17 @@ def computeBifurcationPoint(F : Callable[[np.ndarray], np.ndarray],
             Jz = (F(x + rdiff*z) - F(x - rdiff*z)) / (2*rdiff)
             J_eq = Jz + beta * r
             l_eq = np.dot(l, z)
-            return np.append(J_eq, [l_eq]) - rhs
+            out = np.empty(M+2, dtype=np.result_type(J_eq, l_eq))
+            out[0:M+1] = J_eq
+            out[M+1] = l_eq
+            return out - rhs
 
         # Solve the linear system to obtain beta = z_solution[-1]
         with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
             z_solution = quiet_newton_krylov(bordered_matvec, z0, rdiff=rdiff)
         LOG.verbose(lambda: f'Linear Bifurcation residual {np.linalg.norm(bordered_matvec(z_solution))}')
         beta = z_solution[M+1]
+        beta_cache[float(alpha)] = beta
 
         return beta
     

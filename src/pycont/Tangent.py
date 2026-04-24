@@ -57,7 +57,10 @@ def computeTangent(G: Callable[[np.ndarray, float], np.ndarray],
             eps = rdiff / norm_v
             J += (G(u + eps * v[0:M], p) - G(u - eps * v[0:M], p)) / (2.0*eps)
         eq_2 = np.dot(prev_tangent, v)
-        return np.append(J, eq_2)
+        out = np.empty(M+1, dtype=np.result_type(J, eq_2))
+        out[0:M] = J
+        out[M] = eq_2
+        return out
     sys = slg.LinearOperator((M+1, M+1), matvec)
     rhs = np.zeros(M+1); rhs[M] = 1.0
 

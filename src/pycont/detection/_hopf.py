@@ -414,8 +414,13 @@ def localizeHopfJacobiDavidson(G : Callable[[np.ndarray, float], np.ndarray],
     """
     rdiff = sp["rdiff"]
     nk_tolerance = max(rdiff, sp['tolerance'])
+    eigenpair_cache: Dict[float, Tuple[np.complex128, np.ndarray]] = {}
 
     def hopfEigenpair(alpha : float) -> Tuple[np.complex128, np.ndarray]:
+        cached_pair = eigenpair_cache.get(float(alpha))
+        if cached_pair is not None:
+            return cached_pair
+
         # Build the Jacobian-vector product
         x = (1.0 - alpha) * x_left + alpha * x_right
         u = x[0:M]
@@ -426,6 +431,7 @@ def localizeHopfJacobiDavidson(G : Callable[[np.ndarray, float], np.ndarray],
         lam_guess = (1.0 - alpha) * lam_left + alpha * lam_right
         w_guess = (1.0 - alpha) * w_left + alpha * w_right
         lam, w = _JacobiDavidson(Jv, lam_guess, w_guess, tolerance='accurate')
+        eigenpair_cache[float(alpha)] = (lam, w)
         return lam, w
 
     def realPartHopfEigenvalue(alpha : float) -> float:
@@ -434,16 +440,25 @@ def localizeHopfJacobiDavidson(G : Callable[[np.ndarray, float], np.ndarray],
         LOG.verbose(lambda: f'Hopf Eigenvalue {np.real(lam)} at alpha = {alpha}')
         return np.real(lam)
     
-    # Use the BrentQ algorithm to find the alpha for which lambda is zero in real part. 
-    # Start with a wide bracket because we increase accuracy for localizaiton, and the 
-    # exact values of the eigenvalues may not match. 
-    alpha_left = -6.0
-    alpha_right = 7.0
-    try:
-        alpha_hopf, result = opt.brentq(realPartHopfEigenvalue, alpha_left, alpha_right, xtol=10.0*nk_tolerance, maxiter=1000, full_output=True, disp=True)
-    except ValueError:
-        return False, x_right, lam_right, w_right
-    except opt.NoConvergence:
+    # First search along the detected segment. If the more accurate eigenvalue
+    # updates no longer bracket a zero there, fall back to the historical wide bracket.
+    alpha_hopf = None
+    for alpha_left, alpha_right in ((0.0, 1.0), (-6.0, 7.0)):
+        try:
+            alpha_candidate, result = opt.brentq(realPartHopfEigenvalue,
+                                                alpha_left,
+                                                alpha_right,
+                                                xtol=10.0*nk_tolerance,
+                                                maxiter=1000,
+                                                full_output=True,
+                                                disp=False)
+        except (ValueError, RuntimeError, opt.NoConvergence):
+            continue
+        if result.converged:
+            alpha_hopf = alpha_candidate
+            break
+
+    if alpha_hopf is None:
         return False, x_right, lam_right, w_right
 
     # Compute the lcoation of the Hopf point and the associated eigenpair before returning.

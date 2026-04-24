@@ -7,35 +7,6 @@ from ._optimize import quiet_newton_krylov
 
 from typing import Callable, List, Tuple, Dict
 
-def _find_all_zeros(f : Callable[[np.ndarray], float]) -> List[np.ndarray]:
-    """
-    General function that computes the zeros of a function f with
-    signature `f([alpha, beta]) -> float` on the unit circle.
-    
-    Parameters
-    ----------
-    f : Callable
-        The function to solve.
-    
-    Returns
-    -------
-        solutions : List[ndarray]
-            The (typically four) unit-vector solutions to the homogeneous quadratic system.
-    """
-    t_range = np.linspace(0.0, 2.0*np.pi, 10**6 + 1)
-    
-    prev_f_val = f(np.array([1.0, 0.0]))
-    solutions = []
-    for n in range(1, t_range.size):
-        x = np.array([np.cos(t_range[n]), np.sin(t_range[n])])
-        f_val = f(x)
-
-        if f_val * prev_f_val <= 0.0:
-            solutions.append(x)
-        prev_f_val = f_val
-
-    return solutions
-
 def _solveABSystem(a, b, c):
     """
     Simple function that solves the quadratic form 
@@ -51,8 +22,48 @@ def _solveABSystem(a, b, c):
         solutions : List[ndarray]
             The (typically four) unit-vector solutions to the homogeneous quadratic system.
     """
-    f = lambda y: a*y[0]**2 + 2*b*y[0]*y[1] + c*y[1]**2
-    solutions = _find_all_zeros(f)
+    scale = max(abs(a), abs(b), abs(c), 1.0)
+    tol = 1e-12 * scale
+    solutions: List[np.ndarray] = []
+
+    def add_solution(alpha: float, beta: float) -> None:
+        x = np.array([alpha, beta], dtype=float)
+        norm_x = lg.norm(x)
+        if norm_x <= tol or not np.isfinite(norm_x):
+            return
+        x /= norm_x
+        if not any(lg.norm(x - y) <= 1e-10 for y in solutions):
+            solutions.append(x)
+
+    # Degenerate quadratic: every unit direction is a solution. Returning four
+    # canonical directions preserves the expected branch-switching shape.
+    if abs(a) <= tol and abs(b) <= tol and abs(c) <= tol:
+        return [
+            np.array([1.0, 0.0]),
+            np.array([-1.0, 0.0]),
+            np.array([0.0, 1.0]),
+            np.array([0.0, -1.0]),
+        ]
+
+    discriminant = b*b - a*c
+    if discriminant < -tol:
+        return solutions
+    discriminant = max(0.0, discriminant)
+    sqrt_discriminant = np.sqrt(discriminant)
+
+    if abs(c) > tol:
+        for beta_over_alpha in ((-b + sqrt_discriminant) / c, (-b - sqrt_discriminant) / c):
+            add_solution(1.0, beta_over_alpha)
+            add_solution(-1.0, -beta_over_alpha)
+    elif abs(b) > tol:
+        beta_over_alpha = -a / (2.0*b)
+        add_solution(1.0, beta_over_alpha)
+        add_solution(-1.0, -beta_over_alpha)
+        add_solution(0.0, 1.0)
+        add_solution(0.0, -1.0)
+    else:
+        add_solution(0.0, 1.0)
+        add_solution(0.0, -1.0)
 
     return solutions
 
@@ -111,14 +122,12 @@ def _computeCoefficients(Gu_v : Callable[[np.ndarray, float, np.ndarray], np.nda
 
     return a, b, c
 
-# Minimizing the residual of a system is more stable than finding the exact nullspace
 def _computeNullspace(Gu : Callable[[np.ndarray], np.ndarray], 
                       Gp : np.ndarray, 
                       M : int, 
                       r_diff : float):
     """
-    Compute the nullspaces of the Jacobian Gu and of the extended matrix [Gu | Gp] using
-    a minimization formulation rather than a linear solver.
+    Compute the nullspaces of the Jacobian Gu and of the extended matrix [Gu | Gp].
 
     Parameters
     ----------
@@ -142,14 +151,18 @@ def _computeNullspace(Gu : Callable[[np.ndarray], np.ndarray],
         Unit nullvector of [Gu | Gp] obtained by appending a 1 to w.
     """
     phi_0 = np.eye(M)[:,0]
-    phi_objective = lambda y: 0.5*np.dot(Gu(y), Gu(y))
-    phi_constraint = opt.NonlinearConstraint(lambda y: np.dot(y, y) - 1.0, 0.0, 0.0)
-    min_result = opt.minimize(phi_objective, phi_0, constraints=(phi_constraint), options={"eps": r_diff})
+    def phi_residual(y: np.ndarray) -> np.ndarray:
+        return np.append(Gu(y), np.dot(y, y) - 1.0)
+    min_result = opt.least_squares(phi_residual, phi_0)
     phi = min_result.x
+    phi_norm = lg.norm(phi)
+    if phi_norm > 0.0:
+        phi = phi / phi_norm
 
-    w_objective = lambda y: np.sqrt(np.dot(Gu(y) + Gp, Gu(y) + Gp))
-    min_result = opt.minimize(w_objective, np.zeros(M), method="BFGS", options={"eps": r_diff})
-    w = min_result.x
+    try:
+        w = quiet_newton_krylov(lambda y: Gu(y) + Gp, np.zeros(M), rdiff=r_diff)
+    except opt.NoConvergence as e:
+        w = e.args[0]
     w_1 = np.append(w, 1.0)
     w_1 = w_1 / lg.norm(w_1)
 
@@ -211,15 +224,20 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
         beta  = solutions[n][1]
 
         #s = 0.01
-        N = lambda x: np.dot(alpha*phi + beta/np.sqrt(1.0)*w, x[0:M] - x_singular[0:M]) + beta/np.sqrt(1.0)*(x[M] - x_singular[M]) - sp["s_jump"]
+        branch_u = alpha*phi + beta*w
+        branch_p = beta
+        N = lambda x: np.dot(branch_u, x[0:M] - x_singular[0:M]) + branch_p*(x[M] - x_singular[M]) - sp["s_jump"]
         F_branch = lambda x: np.append(G(x[0:M], x[M]), N(x))
 
-        tangent = np.append(alpha*phi + beta/np.sqrt(1.0)*w, beta/np.sqrt(1.0))
+        tangent = np.append(branch_u, branch_p)
         x0 = x_singular + sp["s_jump"] * tangent / lg.norm(tangent)
         dir = quiet_newton_krylov(F_branch, x0, rdiff=sp["rdiff"], f_tol=sp["tolerance"])
 
         directions.append(dir)
         tangents.append(tangent)
+
+    if not directions:
+        return directions, tangents
 
     # Remove the direction where we came from
     inner_prodct = -np.inf
