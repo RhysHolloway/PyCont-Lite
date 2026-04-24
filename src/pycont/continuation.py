@@ -83,6 +83,10 @@ def pseudoArclengthContinuation(G : Callable[[np.ndarray, float], np.ndarray],
             will improve test reliability but come at a computational cost. 
         - "limit_cycle_continuation" : bool (default `hopf_detection`)
             Whether to perform limit cycle continuation after a Hopf point was detected.
+        - "recursive_branching" : bool (default True)
+            Whether to recursively continue any new branches spawned by a detected fold,
+            branch point, or Hopf point. Disable this to mimic a single AUTO-style pass
+            that stops after the first detected special point on the initial branch.
     verbosity : Verbosity or String or Int
         The level of verbosity required by the user. Can either be Verbosity.QUIET (1), Verbosity.INFO (2) or Verbosity.VERBOSE (3).
         Any string representation of these words will also be accepted.
@@ -133,6 +137,7 @@ def pseudoArclengthContinuation(G : Callable[[np.ndarray, float], np.ndarray],
     sp.setdefault("analyze_stability", True)
     sp.setdefault("seed", 12345)
     sp["s_jump"] = 0.01
+    sp.setdefault("recursive_branching", True)
     
     # Check continuation parameters
     if n_steps < 1 or int(n_steps) != n_steps:
@@ -279,6 +284,9 @@ def _recursiveContinuation(G : Callable[[np.ndarray, float], np.ndarray],
         rightmost_eigenvalue_realpart = stability.rightmost_eig_realpart(G, branch.u_path[index,:], branch.p_path[index], sp)
         branch.stable = (rightmost_eigenvalue_realpart < 0.0)
         LOG.info('Stable' if branch.stable else 'Unstable')
+
+    if not sp["recursive_branching"]:
+        return
 
     # If the last point on the previous branch was a fold point, create a new segment where the last one ended.
     if termination_event.kind == "LP":
