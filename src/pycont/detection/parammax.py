@@ -1,12 +1,11 @@
 import numpy as np
-import scipy.optimize as opt
 
 from pycont.Types import Event
 
 from .base import DetectionModule, ObjectiveType
 from ..Logger import LOG
 from ..exceptions import InputError
-from .._optimize import quiet_newton_krylov
+from ._parambound import localizeParameterBoundary
 
 from typing import Dict, Any, Callable, Optional
 
@@ -55,20 +54,16 @@ class ParamMaxDetectionModule(DetectionModule):
         return False
     
     def localize(self) -> Optional[np.ndarray]:
-        if self.p_new == self.p_prev:
-            alpha = 0.0
-        else:
-            alpha = (self.param_max_value - self.p_prev) / (self.p_new - self.p_prev)
-        u_guess = self.u_prev + alpha * (self.u_new - self.u_prev)
-
-        # Use Newton-Krylov to determine the exact point on the branch where `p = param_max`.
-        objective = lambda u : self.G(u, self.param_max_value)
-        rdiff = self.sp["rdiff"]
-        tolerance = self.sp["tolerance"]
-        try:
-            u_param_max = quiet_newton_krylov(objective, u_guess, rdiff=rdiff, f_tol=tolerance)
-        except opt.NoConvergence as e:
-            u_param_max = e.args[0]
+        u_param_max = localizeParameterBoundary(
+            self.G,
+            self.u_prev,
+            self.p_prev,
+            self.u_new,
+            self.p_new,
+            self.param_max_value,
+            self.sp,
+            "PARAM_MAX",
+        )
 
         # Return the full state at param_max
         return np.append(u_param_max, self.param_max_value)

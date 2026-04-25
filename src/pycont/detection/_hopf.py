@@ -5,7 +5,7 @@ import scipy.optimize as opt
 from ..Logger import LOG
 from .._optimize import quiet_newton_krylov
 
-from typing import Callable, Dict, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 def _pick_near_axis(vals: np.ndarray, omega_min: float) -> int:
     """
@@ -51,6 +51,20 @@ def _filterComplexConjugated(eigvals: np.ndarray,
     vals_out = eigvals[keep_mask]
     vecs_out = eigvecs[:, keep_mask]
     return vals_out, vecs_out
+
+def _is_finite_array(x: np.ndarray | np.complex128 | float) -> bool:
+    """Return True when every entry is finite."""
+    return bool(np.all(np.isfinite(np.asarray(x))))
+
+def _normalize_or_none(v: np.ndarray) -> Optional[np.ndarray]:
+    """
+    Return a normalized complex copy of `v`, or None when the norm is zero/non-finite.
+    """
+    v = np.array(v, dtype=np.complex128, copy=True)
+    norm_v = np.linalg.norm(v)
+    if norm_v == 0.0 or not np.isfinite(norm_v):
+        return None
+    return v / norm_v
 
 def initializeHopf(G: Callable[[np.ndarray, float], np.ndarray],
                    u : np.ndarray,
@@ -157,33 +171,65 @@ def _JacobiDavidson(J : Callable[[np.ndarray], np.ndarray],
     else: # 1 NK step = 1 LGMRES solve but better.
         tol = 1e-3
 
-    v = np.copy(v0)
-    lam = lam0
+    v = _normalize_or_none(v0)
+    lam = np.complex128(lam0)
+    if v is None or not _is_finite_array(lam):
+        LOG.verbose('Jacobi-Davidson received a non-finite initial eigenpair. Keeping the previous iterate.')
+        return lam, np.array(v0, dtype=np.complex128, copy=True)
+
     for iter in range(3):
 
         # Compute the residual and break if it is small enough
         J_mv = lambda w : J(w) - lam * w
         r = J_mv(v)
-        if np.linalg.norm(r) < tol:
+        r_norm = np.linalg.norm(r)
+        if not _is_finite_array(r) or not np.isfinite(r_norm):
+            LOG.verbose('Jacobi-Davidson residual became non-finite. Keeping the previous eigenpair.')
+            return lam, v
+        if r_norm < tol:
             break
 
         # Else compute a Newton update
         P = lambda w : w - v * np.vdot(v, w)
         J_reduced = lambda w : P(J_mv(P(w)))
+        rhs = -P(r)
+        if not _is_finite_array(rhs):
+            LOG.verbose('Jacobi-Davidson correction RHS became non-finite. Keeping the previous eigenpair.')
+            return lam, v
         try:
-            s = quiet_newton_krylov(lambda w : J_reduced(w) + P(r), np.zeros_like(v), f_tol=tol)
+            s = quiet_newton_krylov(lambda w : J_reduced(w) - rhs, np.zeros_like(v), f_tol=tol)
         except opt.NoConvergence as e:
             s = e.args[0]
-        except:
+        except Exception:
             # Solve using L-GMRES if newton_krylov fails
             LOG.verbose('Falling back to LGMRES in Jacobi-Davidson')
-            s, info = slg.lgmres(slg.LinearOperator((M,M), J_reduced), -P(r), atol=tol)
-        LOG.verbose(lambda: f"JD Residual {np.linalg.norm(J_reduced(s)+P(r))}")
+            try:
+                s, info = slg.lgmres(slg.LinearOperator((M,M), J_reduced), rhs, atol=tol)
+            except Exception:
+                LOG.verbose('LGMRES failed in Jacobi-Davidson. Keeping the previous eigenpair.')
+                return lam, v
+        if not _is_finite_array(s):
+            LOG.verbose('Jacobi-Davidson produced a non-finite correction. Keeping the previous eigenpair.')
+            return lam, v
+        residual = J_reduced(s) - rhs
+        if _is_finite_array(residual):
+            LOG.verbose(lambda: f"JD Residual {np.linalg.norm(residual)}")
+        else:
+            LOG.verbose('Jacobi-Davidson residual after correction is non-finite.')
 
         # Update the eigenvector and eigenvalue
-        v = v + P(s)
-        v /= np.linalg.norm(v)
-        lam = np.vdot(v, J(v))
+        v_candidate = v + P(s)
+        v_new = _normalize_or_none(v_candidate)
+        if v_new is None:
+            LOG.verbose('Jacobi-Davidson produced a zero/non-finite eigenvector. Keeping the previous eigenpair.')
+            return lam, v
+
+        lam_new = np.vdot(v_new, J(v_new))
+        if not _is_finite_array(lam_new):
+            LOG.verbose('Jacobi-Davidson produced a non-finite eigenvalue. Keeping the previous eigenpair.')
+            return lam, v
+        v = v_new
+        lam = np.complex128(lam_new)
 
     LOG.verbose(lambda: f"Eigenvalue after Jacobi-Davidson {lam}")
 
@@ -235,9 +281,12 @@ def refreshHopfJacobiDavidson(G: Callable[[np.ndarray, float], np.ndarray],
 
     # Loop over previous eigenvalues and update with the new Jacobian
     for i, (sigma_i, v_i) in enumerate(zip(eigvals_prev, eigvecs_prev.T)):
-        v0 = v_i.astype(np.complex128, copy=False)
-        nv = np.linalg.norm(v0)
-        v0 = v0 / nv
+        v0 = _normalize_or_none(v_i)
+        if v0 is None or not _is_finite_array(sigma_i):
+            LOG.verbose('Skipping Hopf eigenpair update because the previous iterate is not finite.')
+            eigvals_new[i] = sigma_i
+            eigvecs_new[:, i] = np.array(v_i, dtype=np.complex128, copy=True)
+            continue
 
         # Update each eigenvalue and eigenvector using the Jacobi-Davidson algorithm
         sigma_new, v_new = _JacobiDavidson(Jv, sigma_i, v0, tolerance='weak')
@@ -248,7 +297,10 @@ def refreshHopfJacobiDavidson(G: Callable[[np.ndarray, float], np.ndarray],
 
     # Pick lead complex eigenvalue closest to imaginary axis
     lead = _pick_near_axis(eigvals_new, omega_min)  # returns -1 if none
-    LOG.verbose(lambda: f'Hopf Value {eigvals_new[lead]}')
+    if lead != -1:
+        LOG.verbose(lambda: f'Hopf Value {eigvals_new[lead]}')
+    else:
+        LOG.verbose('Hopf tracking found no complex eigenvalue close to the imaginary axis.')
 
     return eigvals_new, eigvecs_new, lead
 
