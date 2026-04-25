@@ -50,7 +50,10 @@ def test_fn_jacobian(F : Callable[[np.ndarray], np.ndarray],
         return (F(x + eps * w) - F(x - eps * w)) / (2.0*eps) - r
 
     with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
-        w_solution = quiet_newton_krylov(matvec, w_prev, rdiff=rdiff)
+        try:
+            w_solution = quiet_newton_krylov(matvec, w_prev, rdiff=rdiff)
+        except opt.NoConvergence as e:
+            w_solution = e.args[0]
     residual = np.linalg.norm(matvec(w_solution))
     beta = -1.0 / np.dot(l, w_solution)
     LOG.verbose(lambda: f'Jacobian test FN = {beta}, residual = {residual}')
@@ -170,7 +173,10 @@ def computeBifurcationPoint(F : Callable[[np.ndarray], np.ndarray],
 
         # Solve the linear system to obtain beta = z_solution[-1]
         with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
-            z_solution = quiet_newton_krylov(bordered_matvec, z0, rdiff=rdiff)
+            try:
+                z_solution = quiet_newton_krylov(bordered_matvec, z0, rdiff=rdiff)
+            except opt.NoConvergence as e:
+                z_solution = e.args[0]
         LOG.verbose(lambda: f'Linear Bifurcation residual {np.linalg.norm(bordered_matvec(z_solution))}')
         beta = z_solution[M+1]
         beta_cache[float(alpha)] = beta

@@ -329,7 +329,10 @@ def _recursiveContinuation(G : Callable[[np.ndarray, float], np.ndarray],
         # Add a tiny jump so we don't rediscover the same Hopf point again. Also project back to the path
         x_init = x_hopf + sp["s_jump"] * tangent
         p_init = x_init[M]
-        u_init = quiet_newton_krylov(lambda u : G(u, p_init), x_init[0:M], rdiff=sp["rdiff"], maxiter=sp["nk_maxiter"])
+        try:
+            u_init = quiet_newton_krylov(lambda u : G(u, p_init), x_init[0:M], rdiff=sp["rdiff"], maxiter=sp["nk_maxiter"])
+        except opt.NoConvergence as e:
+            u_init = e.args[0]
         new_tangent = computeTangent(G, u_init, p_init, tangent, sp)
         _recursiveContinuation(G, u_init, p_init, new_tangent, ds_min, ds_max, ds, n_steps, sp, termination_event_index, detectionModules, result)
 

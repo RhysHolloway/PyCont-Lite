@@ -231,7 +231,10 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
 
         tangent = np.append(branch_u, branch_p)
         x0 = x_singular + sp["s_jump"] * tangent / lg.norm(tangent)
-        dir = quiet_newton_krylov(F_branch, x0, rdiff=sp["rdiff"], f_tol=sp["tolerance"])
+        try:
+            dir = quiet_newton_krylov(F_branch, x0, rdiff=sp["rdiff"], f_tol=sp["tolerance"])
+        except opt.NoConvergence as e:
+            dir = e.args[0]
 
         directions.append(dir)
         tangents.append(tangent)

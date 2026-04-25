@@ -51,7 +51,10 @@ def FitzhughNagumoTest():
         # We know the initial condition looks like a sigmoid
         u0 = sigmoid(x, 14.0, -1, 1.0, 2.0)
         v0 = sigmoid(x, 15, 0.0, 2.0, 0.1)
-        z0 = opt.newton_krylov(lambda z : G(z, eps0), np.concatenate((u0, v0)), f_tol=1e-9, method='lgmres')
+        try:
+            z0 = opt.newton_krylov(lambda z : G(z, eps0), np.concatenate((u0, v0)), f_tol=1e-9, method='lgmres')
+        except opt.NoConvergence as e:
+            z0 = e.args[0]
         np.save(datafile, z0)
     print('Initial FHN Residual:', np.linalg.norm(G(z0, eps0)))
 

@@ -1,5 +1,6 @@
 import numpy as np
 import numpy.linalg as lg
+import scipy.optimize as opt
 import scipy.sparse.linalg as slg
 
 from .Logger import LOG
@@ -72,7 +73,10 @@ def computeTangent(G: Callable[[np.ndarray, float], np.ndarray],
         # Solve the linear system using Newton-Krylov with much better lgmres arguments
         def F(v):
             return matvec(v) - rhs
-        tangent = quiet_newton_krylov(F, prev_tangent, rdiff=rdiff)
+        try:
+            tangent = quiet_newton_krylov(F, prev_tangent, rdiff=rdiff)
+        except opt.NoConvergence as e:
+            tangent = e.args[0]
         tangent_residual = lg.norm(F(tangent))
         LOG.verbose(lambda: f'Tangent Newton-Krylov Residual {tangent_residual}')
 
