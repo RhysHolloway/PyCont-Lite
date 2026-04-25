@@ -354,9 +354,12 @@ def refreshHopf(G: Callable[[np.ndarray, float], np.ndarray],
 
     # Loop over previous eigenvalues and update with the new Jacobian
     for i, (sigma_i, v_i) in enumerate(zip(eigvals_prev, eigvecs_prev.T)):
-        v0 = v_i.astype(np.complex128, copy=False)
-        nv = np.linalg.norm(v0)
-        v0 = v0 / nv
+        v0 = _normalize_or_none(v_i)
+        if v0 is None or not _is_finite_array(sigma_i):
+            LOG.verbose('Skipping deprecated Hopf eigenpair update because the previous iterate is not finite.')
+            eigvals_new[i] = sigma_i
+            eigvecs_new[:, i] = np.array(v_i, dtype=np.complex128, copy=True)
+            continue
 
         # define (J - sigma I) operator, with a tiny imaginary jitter for stability
         shift = sigma_i + 1j * jitter
@@ -379,7 +382,10 @@ def refreshHopf(G: Callable[[np.ndarray, float], np.ndarray],
 
     # Pick lead complex eigenvalue closest to imaginary axis
     lead = _pick_near_axis(eigvals_new, omega_min)  # returns -1 if none
-    LOG.verbose(lambda: f'Hopf Value {eigvals_new[lead]}')
+    if lead != -1:
+        LOG.verbose(lambda: f'Hopf Value {eigvals_new[lead]}')
+    else:
+        LOG.verbose('Hopf tracking found no complex eigenvalue close to the imaginary axis.')
 
     return eigvals_new, eigvecs_new, lead
 

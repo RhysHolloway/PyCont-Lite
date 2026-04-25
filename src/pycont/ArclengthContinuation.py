@@ -81,7 +81,14 @@ def continuation(G : Callable[[np.ndarray, float], np.ndarray],
 	# Initialize a point on the path
 	x = np.append(u0, p0)
 	s = 0.0
-	tangent = initial_tangent / lg.norm(initial_tangent)
+	initial_tangent_norm = lg.norm(initial_tangent)
+	if not np.isfinite(initial_tangent_norm) or initial_tangent_norm == 0.0:
+		LOG.info('Initial tangent is zero or non-finite. Aborting continuation on this branch.')
+		branch = Branch(branch_id, n_steps, u0, p0)
+		termination_event = Event("DSFLOOR", u0, p0, s)
+		branch.termination_event = termination_event
+		return branch.trim(), termination_event
+	tangent = initial_tangent / initial_tangent_norm
 	branch = Branch(branch_id, n_steps, u0, p0)
 	LOG.info(lambda: f"Step n: {0:3d}\t u: {lg.norm(u0):.4f}\t p: {p0:.4f}\t s: {s:.4f}\t t_p: {tangent[M]:.4f}")
 

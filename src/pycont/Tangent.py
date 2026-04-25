@@ -8,6 +8,13 @@ from ._optimize import quiet_newton_krylov
 
 from typing import Callable, Dict
 
+
+def _normalize_or_none(v: np.ndarray) -> np.ndarray | None:
+    norm_v = lg.norm(v)
+    if not np.isfinite(norm_v) or norm_v == 0.0:
+        return None
+    return v / norm_v
+
 def computeTangent(G: Callable[[np.ndarray, float], np.ndarray],
 				   u : np.ndarray, 
 				   p : float, 
@@ -81,5 +88,17 @@ def computeTangent(G: Callable[[np.ndarray, float], np.ndarray],
         LOG.verbose(lambda: f'Tangent Newton-Krylov Residual {tangent_residual}')
 
     # Make sure the new tangent lies in the direction of the previous one and return
-    tangent = np.sign(np.dot(tangent, prev_tangent)) * tangent / lg.norm(tangent)
-    return tangent
+    tangent_normalized = _normalize_or_none(tangent)
+    if tangent_normalized is None:
+        LOG.verbose('Computed tangent is zero/non-finite. Falling back to the previous tangent.')
+        tangent_normalized = _normalize_or_none(prev_tangent)
+        if tangent_normalized is None:
+            return np.array(prev_tangent, copy=True)
+
+    direction = np.dot(tangent_normalized, prev_tangent)
+    if not np.isfinite(direction):
+        direction = 1.0
+    sign = np.sign(direction)
+    if sign == 0.0:
+        sign = 1.0
+    return sign * tangent_normalized

@@ -7,6 +7,13 @@ from ._optimize import quiet_newton_krylov
 
 from typing import Callable, List, Tuple, Dict
 
+
+def _normalize_or_none(v: np.ndarray) -> np.ndarray | None:
+    norm_v = lg.norm(v)
+    if not np.isfinite(norm_v) or norm_v == 0.0:
+        return None
+    return v / norm_v
+
 def _solveABSystem(a, b, c):
     """
     Simple function that solves the quadratic form 
@@ -155,16 +162,25 @@ def _computeNullspace(Gu : Callable[[np.ndarray], np.ndarray],
         return np.append(Gu(y), np.dot(y, y) - 1.0)
     min_result = opt.least_squares(phi_residual, phi_0)
     phi = min_result.x
-    phi_norm = lg.norm(phi)
-    if phi_norm > 0.0:
-        phi = phi / phi_norm
+    phi_normalized = _normalize_or_none(phi)
+    if phi_normalized is None:
+        phi = np.array(phi_0, copy=True)
+    else:
+        phi = phi_normalized
 
     try:
         w = quiet_newton_krylov(lambda y: Gu(y) + Gp, np.zeros(M), rdiff=r_diff)
     except opt.NoConvergence as e:
         w = e.args[0]
+    if not np.all(np.isfinite(w)):
+        w = np.zeros(M)
     w_1 = np.append(w, 1.0)
-    w_1 = w_1 / lg.norm(w_1)
+    w_1_normalized = _normalize_or_none(w_1)
+    if w_1_normalized is None:
+        w_1 = np.zeros(M + 1)
+        w_1[-1] = 1.0
+    else:
+        w_1 = w_1_normalized
 
     return phi, w, w_1
 
@@ -205,7 +221,7 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
     rdiff = sp["rdiff"]
     def Gu_v(u : np.ndarray, p : float, v : np.ndarray) -> np.ndarray:
         norm_v = lg.norm(v)
-        if norm_v == 0.:
+        if norm_v == 0. or not np.isfinite(norm_v):
             return np.zeros_like(u)
         eps = rdiff / norm_v
         return (G(u + eps * v, p) - G(u - eps * v, p)) / (2.0 * eps)
@@ -230,11 +246,16 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
         F_branch = lambda x: np.append(G(x[0:M], x[M]), N(x))
 
         tangent = np.append(branch_u, branch_p)
-        x0 = x_singular + sp["s_jump"] * tangent / lg.norm(tangent)
+        tangent_normalized = _normalize_or_none(tangent)
+        if tangent_normalized is None:
+            continue
+        x0 = x_singular + sp["s_jump"] * tangent_normalized
         try:
             dir = quiet_newton_krylov(F_branch, x0, rdiff=sp["rdiff"], f_tol=sp["tolerance"])
         except opt.NoConvergence as e:
             dir = e.args[0]
+        if not np.all(np.isfinite(dir)):
+            continue
 
         directions.append(dir)
         tangents.append(tangent)
@@ -244,13 +265,22 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
 
     # Remove the direction where we came from
     inner_prodct = -np.inf
-    for n in range(len(directions)):
-        inner_pd = np.dot(directions[n]-x_singular, x_prev-x_singular) / (lg.norm(directions[n]-x_singular) * lg.norm(x_prev-x_singular))
-        if inner_pd > inner_prodct:
-            inner_prodct = inner_pd
-            idx = n
-    directions.pop(idx)
-    tangents.pop(idx)
+    idx = None
+    prev_delta = x_prev - x_singular
+    prev_norm = lg.norm(prev_delta)
+    if np.isfinite(prev_norm) and prev_norm > 0.0:
+        for n in range(len(directions)):
+            direction_delta = directions[n] - x_singular
+            direction_norm = lg.norm(direction_delta)
+            if not np.isfinite(direction_norm) or direction_norm == 0.0:
+                continue
+            inner_pd = np.dot(direction_delta, prev_delta) / (direction_norm * prev_norm)
+            if inner_pd > inner_prodct:
+                inner_prodct = inner_pd
+                idx = n
+    if idx is not None:
+        directions.pop(idx)
+        tangents.pop(idx)
     LOG.info(lambda: f'Branch Switching Tangents: {tangents}')
 
     # Returning 3 continuation directions

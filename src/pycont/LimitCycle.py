@@ -7,6 +7,13 @@ from ._optimize import quiet_newton_krylov
 
 from typing import Callable, Dict, Tuple, Optional
 
+
+def _normalize_or_none(v: np.ndarray) -> np.ndarray | None:
+    norm_v = np.linalg.norm(v)
+    if not np.isfinite(norm_v) or norm_v == 0.0:
+        return None
+    return v / norm_v
+
 def _evaluate_time_slices(G : Callable[[np.ndarray, float], np.ndarray],
                           X : np.ndarray,
                           p : float) -> np.ndarray:
@@ -88,6 +95,8 @@ def createLimitCycleObjectiveFunction(G : Callable[[np.ndarray, float], np.ndarr
         the paramter `p` outputs vector of the same size.
 
     """
+    if L <= 0:
+        raise ValueError(f"L must be strictly positive, got {L}.")
     dtau = 1.0 / L
     U_ref = np.reshape(U_ref, (M,L), 'F')
     dU_ref_dtau = (np.roll(U_ref, shift=-1, axis=1) - U_ref) / dtau
@@ -148,13 +157,32 @@ def calculateInitialLimitCycle(G : Callable[[np.ndarray, float], np.ndarray],
     """
     u_hopf = x_hopf[0:M]
     p_hopf = x_hopf[M]
+    if L <= 0:
+        LOG.info(lambda: f'Cannot initialize a limit cycle with non-positive L = {L}.')
+        return None
+    if not np.isfinite(omega) or omega == 0.0:
+        LOG.info('Cannot initialize a limit cycle because the Hopf frequency is zero or non-finite.')
+        return None
 
     # Orthogonalize the real and imaginary components of `eigvec`.
     qr = np.real(eigvec)
     qi = np.imag(eigvec)
-    qr = qr / np.linalg.norm(qr)
+    qr_normalized = _normalize_or_none(qr)
+    qi_normalized = _normalize_or_none(qi)
+    if qr_normalized is None and qi_normalized is None:
+        LOG.info('Cannot initialize a limit cycle because the Hopf eigenvector is degenerate.')
+        return None
+    if qr_normalized is None:
+        qr = qi_normalized
+        qi = np.real(eigvec)
+    else:
+        qr = qr_normalized
     qi = qi - np.dot(qr, qi) * qr
-    qi /= np.linalg.norm(qi)
+    qi_normalized = _normalize_or_none(qi)
+    if qi_normalized is None:
+        LOG.info('Cannot initialize a limit cycle because the Hopf eigenvector does not span a two-dimensional real plane.')
+        return None
+    qi = qi_normalized
     
     # Build the objective function and initial phase condition
     dtau = 1.0 / L

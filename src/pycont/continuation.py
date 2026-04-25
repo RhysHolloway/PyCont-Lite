@@ -131,6 +131,8 @@ def pseudoArclengthContinuation(G : Callable[[np.ndarray, float], np.ndarray],
     rdiff = sp.setdefault("rdiff", 6.6e-6)
     nk_maxiter = sp.setdefault("nk_maxiter", 10)
     tolerance = sp.setdefault("tolerance", 1e-10)
+    if not np.isfinite(rdiff) or rdiff <= 0.0:
+        raise InputError(f"rdiff must be strictly positive and finite. Got {rdiff}.")
     if nk_maxiter <= 0:
         raise InputError(f"nk_maxiter must be strictly positive. Got {nk_maxiter}.")
     if tolerance <= 0.0:
@@ -175,11 +177,20 @@ def pseudoArclengthContinuation(G : Callable[[np.ndarray, float], np.ndarray],
         try:
             u1 = quiet_newton_krylov(lambda uu: G(uu, p0 + rdiff), u0, f_tol=tolerance, rdiff=rdiff, maxiter=nk_maxiter)
         except opt.NoConvergence as e:
-            LOG.info(lambda: f'Initial Tangent Computation Failed with Relative Error = {lg.norm(G(e.args[0], p0 + rdiff)) / lg.norm(u0)}')
+            residual_norm = lg.norm(G(e.args[0], p0 + rdiff))
+            u0_norm = lg.norm(u0)
+            if np.isfinite(u0_norm) and u0_norm > 0.0:
+                LOG.info(lambda: f'Initial Tangent Computation Failed with Relative Error = {residual_norm / u0_norm}')
+            else:
+                LOG.info(lambda: f'Initial Tangent Computation Failed with Residual Norm = {residual_norm}')
             u1 = e.args[0]
             #raise InputError("Initial tangent computation failed.")
     initial_tangent = (u1 - u0) / rdiff
-    initial_tangent = np.append(initial_tangent, 1.0); initial_tangent = initial_tangent / lg.norm(initial_tangent)
+    initial_tangent = np.append(initial_tangent, 1.0)
+    initial_tangent_norm = lg.norm(initial_tangent)
+    if not np.isfinite(initial_tangent_norm) or initial_tangent_norm == 0.0:
+        raise InputError("Initial tangent is zero or non-finite after secant initialization.")
+    initial_tangent = initial_tangent / initial_tangent_norm
     tangent = computeTangent(G, u0, p0, initial_tangent, sp)
     if not np.all(np.isfinite(tangent)):
         raise InputError(f"Initial tangent contains NaN or Inf values {tangent}. Perhaps G(u0, p0) is not finite?")
@@ -417,14 +428,25 @@ def _limitCylceContinuation(G : Callable[[np.ndarray, float], np.ndarray],
     # Calculate the iniital tangent along this branch. 
     LOG.info('\nComputing Initial Tangent to the Limit Cycle Branch.')
     p_dir = np.sign(lc_p_init - hopf_event.p)
+    if not np.isfinite(p_dir) or p_dir == 0.0:
+        p_dir = 1.0
     p1 = lc_p_init + 0.01*p_dir
     with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
         try:
             Q1 = quiet_newton_krylov(lambda q: G_lc(q, p1), Q_init, rdiff=rdiff, f_tol=1e-4, maxiter=50)
         except opt.NoConvergence as e:
             Q1 = e.args[0]
-    initial_tangent = (Q1 - Q_init) / (p1 - lc_p_init)
-    initial_tangent = np.append(initial_tangent, p_dir); initial_tangent = initial_tangent / lg.norm(initial_tangent)
+    tangent_dp = p1 - lc_p_init
+    if not np.isfinite(tangent_dp) or tangent_dp == 0.0:
+        LOG.info('Could not compute the initial limit-cycle tangent because the parameter step vanished.')
+        return
+    initial_tangent = (Q1 - Q_init) / tangent_dp
+    initial_tangent = np.append(initial_tangent, p_dir)
+    initial_tangent_norm = lg.norm(initial_tangent)
+    if not np.isfinite(initial_tangent_norm) or initial_tangent_norm == 0.0:
+        LOG.info('Could not compute the initial limit-cycle tangent because it collapsed to zero/non-finite values.')
+        return
+    initial_tangent = initial_tangent / initial_tangent_norm
     tangent = computeTangent(G_lc, Q_init, lc_p_init, initial_tangent, sp, high_accuracy=False)
     LOG.verbose(lambda: f'tangent final component {tangent[-1]}')
     LOG.verbose(lambda: f'Initial G value {lg.norm(G_lc(Q1, p1))}')

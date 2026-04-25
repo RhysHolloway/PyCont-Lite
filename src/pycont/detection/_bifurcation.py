@@ -6,6 +6,12 @@ from .._optimize import quiet_newton_krylov
 
 from typing import Callable, Tuple, Dict
 
+
+def _safe_denominator(denom: float, tol: float = 1e-14) -> float | None:
+    if not np.isfinite(denom) or abs(denom) <= tol:
+        return None
+    return denom
+
 def test_fn_jacobian(F : Callable[[np.ndarray], np.ndarray], 
 					 x : np.ndarray,
 					 l : np.ndarray, 
@@ -55,7 +61,8 @@ def test_fn_jacobian(F : Callable[[np.ndarray], np.ndarray],
         except opt.NoConvergence as e:
             w_solution = e.args[0]
     residual = np.linalg.norm(matvec(w_solution))
-    beta = -1.0 / np.dot(l, w_solution)
+    denom = _safe_denominator(float(np.dot(l, w_solution)))
+    beta = np.inf if denom is None else -1.0 / denom
     LOG.verbose(lambda: f'Jacobian test FN = {beta}, residual = {residual}')
 
     return w_solution, beta
@@ -145,8 +152,13 @@ def computeBifurcationPoint(F : Callable[[np.ndarray], np.ndarray],
     r = r_vectors[index]
     w = w_vectors_left[index]
     if len(w) == M+1:
-        S = np.dot(l, w)
-        z0 = np.append(w / S, -1.0 / S)
+        S = _safe_denominator(float(np.dot(l, w)))
+        if S is None:
+            z0 = np.zeros(M+2)
+            if np.all(np.isfinite(w)):
+                z0[0:M+1] = w
+        else:
+            z0 = np.append(w / S, -1.0 / S)
     else:
         z0 = np.copy(w)
 
