@@ -9,11 +9,21 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 
 from pycont import arclengthContinuation
 from pycont.LimitCycle import calculateInitialLimitCycle, createLimitCycleObjectiveFunction
+from pycont._optimize import quiet_newton_krylov
 from pycont.detection._bifurcation import test_fn_jacobian
 from pycont.exceptions import InputError
 
 
 class ZeroDivideGuardsTests(unittest.TestCase):
+    def test_quiet_newton_krylov_returns_initial_exact_root_without_scipy_call(self) -> None:
+        x0 = np.array([1.0, -2.0])
+
+        with mock.patch("pycont._optimize.opt.newton_krylov") as newton_krylov:
+            x = quiet_newton_krylov(lambda x: np.zeros_like(x), x0, f_tol=1e-8)
+
+        newton_krylov.assert_not_called()
+        np.testing.assert_allclose(x, x0)
+
     def test_continuation_rejects_zero_rdiff(self) -> None:
         def G(u: np.ndarray, p: float) -> np.ndarray:
             return u - p
