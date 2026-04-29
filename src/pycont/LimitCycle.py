@@ -7,6 +7,33 @@ from ._optimize import quiet_newton_krylov
 
 from typing import Callable, Dict, Tuple, Optional
 
+
+def _normalize_or_none(v: np.ndarray) -> np.ndarray | None:
+    norm_v = np.linalg.norm(v)
+    if not np.isfinite(norm_v) or norm_v == 0.0:
+        return None
+    return v / norm_v
+
+def _evaluate_time_slices(G : Callable[[np.ndarray, float], np.ndarray],
+                          X : np.ndarray,
+                          p : float) -> np.ndarray:
+    """Evaluate G column-wise, using a vectorized G implementation when available."""
+    try:
+        values = np.asarray(G(X, p))
+        if values.shape == X.shape:
+            return values
+    except Exception:
+        pass
+
+    first_value = np.asarray(G(X[:,0], p)).reshape(-1)
+    if first_value.size != X.shape[0]:
+        raise ValueError(f"Expected G to return {X.shape[0]} values, got {first_value.size}.")
+    values = np.empty(X.shape, dtype=first_value.dtype)
+    values[:,0] = first_value
+    for index in range(1, X.shape[1]):
+        values[:,index] = np.asarray(G(X[:,index], p)).reshape(-1)
+    return values
+
 def buildODEObjective(G : Callable[[np.ndarray, float], np.ndarray],
                       dtau : float,
                       M : int,
@@ -35,7 +62,7 @@ def buildODEObjective(G : Callable[[np.ndarray, float], np.ndarray],
         U_shifted = np.roll(U, shift=-1, axis=1)
 
         X_alpha = 0.5 * (U + U_shifted)
-        G_alpha = np.apply_along_axis(lambda u: G(u, p), 0, X_alpha)
+        G_alpha = _evaluate_time_slices(G, X_alpha, p)
 
         R = U_shifted - U - dtau * T * G_alpha
         return R.flatten('F')
@@ -68,6 +95,8 @@ def createLimitCycleObjectiveFunction(G : Callable[[np.ndarray, float], np.ndarr
         the paramter `p` outputs vector of the same size.
 
     """
+    if L <= 0:
+        raise ValueError(f"L must be strictly positive, got {L}.")
     dtau = 1.0 / L
     U_ref = np.reshape(U_ref, (M,L), 'F')
     dU_ref_dtau = (np.roll(U_ref, shift=-1, axis=1) - U_ref) / dtau
@@ -128,13 +157,32 @@ def calculateInitialLimitCycle(G : Callable[[np.ndarray, float], np.ndarray],
     """
     u_hopf = x_hopf[0:M]
     p_hopf = x_hopf[M]
+    if L <= 0:
+        LOG.info(lambda: f'Cannot initialize a limit cycle with non-positive L = {L}.')
+        return None
+    if not np.isfinite(omega) or omega == 0.0:
+        LOG.info('Cannot initialize a limit cycle because the Hopf frequency is zero or non-finite.')
+        return None
 
     # Orthogonalize the real and imaginary components of `eigvec`.
     qr = np.real(eigvec)
     qi = np.imag(eigvec)
-    qr = qr / np.linalg.norm(qr)
+    qr_normalized = _normalize_or_none(qr)
+    qi_normalized = _normalize_or_none(qi)
+    if qr_normalized is None and qi_normalized is None:
+        LOG.info('Cannot initialize a limit cycle because the Hopf eigenvector is degenerate.')
+        return None
+    if qr_normalized is None:
+        qr = qi_normalized
+        qi = np.real(eigvec)
+    else:
+        qr = qr_normalized
     qi = qi - np.dot(qr, qi) * qr
-    qi /= np.linalg.norm(qi)
+    qi_normalized = _normalize_or_none(qi)
+    if qi_normalized is None:
+        LOG.info('Cannot initialize a limit cycle because the Hopf eigenvector does not span a two-dimensional real plane.')
+        return None
+    qi = qi_normalized
     
     # Build the objective function and initial phase condition
     dtau = 1.0 / L

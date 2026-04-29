@@ -50,7 +50,10 @@ def computeFoldPoint(G : Callable[[np.ndarray, float], np.ndarray],
 	def finalTangentComponent(alpha):
 		F = make_F_ext(alpha)
 		with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
-			x_alpha = quiet_newton_krylov(F, x_left, rdiff=rdiff)
+			try:
+				x_alpha = quiet_newton_krylov(F, x_left, rdiff=rdiff)
+			except opt.NoConvergence as e:
+				x_alpha = e.args[0]
 		tangent = computeTangent(G, x_alpha[0:M], x_alpha[M], tangent_ref, sp)
 		return tangent[M]
 	

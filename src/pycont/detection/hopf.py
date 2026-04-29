@@ -38,13 +38,21 @@ class HopfDetectionModule(DetectionModule):
         self.n_hopf_eigenvalues = sp.get("n_hopf_eigenvalues", min(6, self.M))
         LOG.verbose(lambda: f'Hopf detector {self.n_hopf_eigenvalues}.')
 
+    @staticmethod
+    def _is_confident_state(state: HopfState) -> bool:
+        """
+        A Hopf state is only confident when it actually tracks a complex pair.
+        """
+        if state.lead < 0:
+            return False
+        return bool(np.abs(np.real(state.eigvals[state.lead])) > 3e-3)
+
     def initializeBranch(self,
                          x : np.ndarray,
                          tangent : np.ndarray) -> None:
         eigvals, eigvecs, lead = initializeHopf(self.G, x[0:self.M], x[self.M], self.n_hopf_eigenvalues, self.sp)
-        self.in_confident_region = (np.abs(np.real(eigvals[lead])) > 3e-3)
-
         self.prev_state = HopfState(np.copy(x), eigvals, eigvecs, lead)
+        self.in_confident_region = self._is_confident_state(self.prev_state)
 
     def update(self,
                F : Callable[[np.ndarray], np.ndarray],
@@ -63,7 +71,7 @@ class HopfDetectionModule(DetectionModule):
         
         # Else, update the internal state
         self.prev_state = self.new_state
-        self.in_confident_region = self.in_confident_region or (np.abs(np.real(self.prev_state.eigvals[self.prev_state.lead])) > 3e-3)
+        self.in_confident_region = self.in_confident_region or self._is_confident_state(self.prev_state)
         return False
     
     def localize(self) -> Optional[np.ndarray]:

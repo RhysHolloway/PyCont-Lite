@@ -6,6 +6,12 @@ from .._optimize import quiet_newton_krylov
 
 from typing import Callable, Tuple, Dict
 
+
+def _safe_denominator(denom: float, tol: float = 1e-14) -> float | None:
+    if not np.isfinite(denom) or abs(denom) <= tol:
+        return None
+    return denom
+
 def test_fn_jacobian(F : Callable[[np.ndarray], np.ndarray], 
 					 x : np.ndarray,
 					 l : np.ndarray, 
@@ -50,9 +56,13 @@ def test_fn_jacobian(F : Callable[[np.ndarray], np.ndarray],
         return (F(x + eps * w) - F(x - eps * w)) / (2.0*eps) - r
 
     with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
-        w_solution = quiet_newton_krylov(matvec, w_prev, rdiff=rdiff)
+        try:
+            w_solution = quiet_newton_krylov(matvec, w_prev, rdiff=rdiff)
+        except opt.NoConvergence as e:
+            w_solution = e.args[0]
     residual = np.linalg.norm(matvec(w_solution))
-    beta = -1.0 / np.dot(l, w_solution)
+    denom = _safe_denominator(float(np.dot(l, w_solution)))
+    beta = np.inf if denom is None else -1.0 / denom
     LOG.verbose(lambda: f'Jacobian test FN = {beta}, residual = {residual}')
 
     return w_solution, beta
@@ -142,13 +152,23 @@ def computeBifurcationPoint(F : Callable[[np.ndarray], np.ndarray],
     r = r_vectors[index]
     w = w_vectors_left[index]
     if len(w) == M+1:
-        S = np.dot(l, w)
-        z0 = np.append(w / S, -1.0 / S)
+        S = _safe_denominator(float(np.dot(l, w)))
+        if S is None:
+            z0 = np.zeros(M+2)
+            if np.all(np.isfinite(w)):
+                z0[0:M+1] = w
+        else:
+            z0 = np.append(w / S, -1.0 / S)
     else:
         z0 = np.copy(w)
 
     # Build the Bisection Objective Function
+    beta_cache: Dict[float, float] = {}
     def BFObjective(alpha : float) -> float:
+        cached_beta = beta_cache.get(float(alpha))
+        if cached_beta is not None:
+            return cached_beta
+
         x = x_left + alpha * x_diff
         
         # Build the linear system
@@ -158,13 +178,20 @@ def computeBifurcationPoint(F : Callable[[np.ndarray], np.ndarray],
             Jz = (F(x + rdiff*z) - F(x - rdiff*z)) / (2*rdiff)
             J_eq = Jz + beta * r
             l_eq = np.dot(l, z)
-            return np.append(J_eq, [l_eq]) - rhs
+            out = np.empty(M+2, dtype=np.result_type(J_eq, l_eq))
+            out[0:M+1] = J_eq
+            out[M+1] = l_eq
+            return out - rhs
 
         # Solve the linear system to obtain beta = z_solution[-1]
         with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
-            z_solution = quiet_newton_krylov(bordered_matvec, z0, rdiff=rdiff)
+            try:
+                z_solution = quiet_newton_krylov(bordered_matvec, z0, rdiff=rdiff)
+            except opt.NoConvergence as e:
+                z_solution = e.args[0]
         LOG.verbose(lambda: f'Linear Bifurcation residual {np.linalg.norm(bordered_matvec(z_solution))}')
         beta = z_solution[M+1]
+        beta_cache[float(alpha)] = beta
 
         return beta
     

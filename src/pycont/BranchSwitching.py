@@ -7,34 +7,12 @@ from ._optimize import quiet_newton_krylov
 
 from typing import Callable, List, Tuple, Dict
 
-def _find_all_zeros(f : Callable[[np.ndarray], float]) -> List[np.ndarray]:
-    """
-    General function that computes the zeros of a function f with
-    signature `f([alpha, beta]) -> float` on the unit circle.
-    
-    Parameters
-    ----------
-    f : Callable
-        The function to solve.
-    
-    Returns
-    -------
-        solutions : List[ndarray]
-            The (typically four) unit-vector solutions to the homogeneous quadratic system.
-    """
-    t_range = np.linspace(0.0, 2.0*np.pi, 10**6 + 1)
-    
-    prev_f_val = f(np.array([1.0, 0.0]))
-    solutions = []
-    for n in range(1, t_range.size):
-        x = np.array([np.cos(t_range[n]), np.sin(t_range[n])])
-        f_val = f(x)
 
-        if f_val * prev_f_val <= 0.0:
-            solutions.append(x)
-        prev_f_val = f_val
-
-    return solutions
+def _normalize_or_none(v: np.ndarray) -> np.ndarray | None:
+    norm_v = lg.norm(v)
+    if not np.isfinite(norm_v) or norm_v == 0.0:
+        return None
+    return v / norm_v
 
 def _solveABSystem(a, b, c):
     """
@@ -51,8 +29,48 @@ def _solveABSystem(a, b, c):
         solutions : List[ndarray]
             The (typically four) unit-vector solutions to the homogeneous quadratic system.
     """
-    f = lambda y: a*y[0]**2 + 2*b*y[0]*y[1] + c*y[1]**2
-    solutions = _find_all_zeros(f)
+    scale = max(abs(a), abs(b), abs(c), 1.0)
+    tol = 1e-12 * scale
+    solutions: List[np.ndarray] = []
+
+    def add_solution(alpha: float, beta: float) -> None:
+        x = np.array([alpha, beta], dtype=float)
+        norm_x = lg.norm(x)
+        if norm_x <= tol or not np.isfinite(norm_x):
+            return
+        x /= norm_x
+        if not any(lg.norm(x - y) <= 1e-10 for y in solutions):
+            solutions.append(x)
+
+    # Degenerate quadratic: every unit direction is a solution. Returning four
+    # canonical directions preserves the expected branch-switching shape.
+    if abs(a) <= tol and abs(b) <= tol and abs(c) <= tol:
+        return [
+            np.array([1.0, 0.0]),
+            np.array([-1.0, 0.0]),
+            np.array([0.0, 1.0]),
+            np.array([0.0, -1.0]),
+        ]
+
+    discriminant = b*b - a*c
+    if discriminant < -tol:
+        return solutions
+    discriminant = max(0.0, discriminant)
+    sqrt_discriminant = np.sqrt(discriminant)
+
+    if abs(c) > tol:
+        for beta_over_alpha in ((-b + sqrt_discriminant) / c, (-b - sqrt_discriminant) / c):
+            add_solution(1.0, beta_over_alpha)
+            add_solution(-1.0, -beta_over_alpha)
+    elif abs(b) > tol:
+        beta_over_alpha = -a / (2.0*b)
+        add_solution(1.0, beta_over_alpha)
+        add_solution(-1.0, -beta_over_alpha)
+        add_solution(0.0, 1.0)
+        add_solution(0.0, -1.0)
+    else:
+        add_solution(0.0, 1.0)
+        add_solution(0.0, -1.0)
 
     return solutions
 
@@ -111,14 +129,12 @@ def _computeCoefficients(Gu_v : Callable[[np.ndarray, float, np.ndarray], np.nda
 
     return a, b, c
 
-# Minimizing the residual of a system is more stable than finding the exact nullspace
 def _computeNullspace(Gu : Callable[[np.ndarray], np.ndarray], 
                       Gp : np.ndarray, 
                       M : int, 
                       r_diff : float):
     """
-    Compute the nullspaces of the Jacobian Gu and of the extended matrix [Gu | Gp] using
-    a minimization formulation rather than a linear solver.
+    Compute the nullspaces of the Jacobian Gu and of the extended matrix [Gu | Gp].
 
     Parameters
     ----------
@@ -142,16 +158,29 @@ def _computeNullspace(Gu : Callable[[np.ndarray], np.ndarray],
         Unit nullvector of [Gu | Gp] obtained by appending a 1 to w.
     """
     phi_0 = np.eye(M)[:,0]
-    phi_objective = lambda y: 0.5*np.dot(Gu(y), Gu(y))
-    phi_constraint = opt.NonlinearConstraint(lambda y: np.dot(y, y) - 1.0, 0.0, 0.0)
-    min_result = opt.minimize(phi_objective, phi_0, constraints=(phi_constraint), options={"eps": r_diff})
+    def phi_residual(y: np.ndarray) -> np.ndarray:
+        return np.append(Gu(y), np.dot(y, y) - 1.0)
+    min_result = opt.least_squares(phi_residual, phi_0)
     phi = min_result.x
+    phi_normalized = _normalize_or_none(phi)
+    if phi_normalized is None:
+        phi = np.array(phi_0, copy=True)
+    else:
+        phi = phi_normalized
 
-    w_objective = lambda y: np.sqrt(np.dot(Gu(y) + Gp, Gu(y) + Gp))
-    min_result = opt.minimize(w_objective, np.zeros(M), method="BFGS", options={"eps": r_diff})
-    w = min_result.x
+    try:
+        w = quiet_newton_krylov(lambda y: Gu(y) + Gp, np.zeros(M), rdiff=r_diff)
+    except opt.NoConvergence as e:
+        w = e.args[0]
+    if not np.all(np.isfinite(w)):
+        w = np.zeros(M)
     w_1 = np.append(w, 1.0)
-    w_1 = w_1 / lg.norm(w_1)
+    w_1_normalized = _normalize_or_none(w_1)
+    if w_1_normalized is None:
+        w_1 = np.zeros(M + 1)
+        w_1[-1] = 1.0
+    else:
+        w_1 = w_1_normalized
 
     return phi, w, w_1
 
@@ -192,7 +221,7 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
     rdiff = sp["rdiff"]
     def Gu_v(u : np.ndarray, p : float, v : np.ndarray) -> np.ndarray:
         norm_v = lg.norm(v)
-        if norm_v == 0.:
+        if norm_v == 0. or not np.isfinite(norm_v):
             return np.zeros_like(u)
         eps = rdiff / norm_v
         return (G(u + eps * v, p) - G(u - eps * v, p)) / (2.0 * eps)
@@ -211,25 +240,47 @@ def branchSwitching(G : Callable[[np.ndarray, float], np.ndarray],
         beta  = solutions[n][1]
 
         #s = 0.01
-        N = lambda x: np.dot(alpha*phi + beta/np.sqrt(1.0)*w, x[0:M] - x_singular[0:M]) + beta/np.sqrt(1.0)*(x[M] - x_singular[M]) - sp["s_jump"]
+        branch_u = alpha*phi + beta*w
+        branch_p = beta
+        N = lambda x: np.dot(branch_u, x[0:M] - x_singular[0:M]) + branch_p*(x[M] - x_singular[M]) - sp["s_jump"]
         F_branch = lambda x: np.append(G(x[0:M], x[M]), N(x))
 
-        tangent = np.append(alpha*phi + beta/np.sqrt(1.0)*w, beta/np.sqrt(1.0))
-        x0 = x_singular + sp["s_jump"] * tangent / lg.norm(tangent)
-        dir = quiet_newton_krylov(F_branch, x0, rdiff=sp["rdiff"], f_tol=sp["tolerance"])
+        tangent = np.append(branch_u, branch_p)
+        tangent_normalized = _normalize_or_none(tangent)
+        if tangent_normalized is None:
+            continue
+        x0 = x_singular + sp["s_jump"] * tangent_normalized
+        try:
+            dir = quiet_newton_krylov(F_branch, x0, rdiff=sp["rdiff"], f_tol=sp["tolerance"])
+        except opt.NoConvergence as e:
+            dir = e.args[0]
+        if not np.all(np.isfinite(dir)):
+            continue
 
         directions.append(dir)
         tangents.append(tangent)
 
+    if not directions:
+        return directions, tangents
+
     # Remove the direction where we came from
     inner_prodct = -np.inf
-    for n in range(len(directions)):
-        inner_pd = np.dot(directions[n]-x_singular, x_prev-x_singular) / (lg.norm(directions[n]-x_singular) * lg.norm(x_prev-x_singular))
-        if inner_pd > inner_prodct:
-            inner_prodct = inner_pd
-            idx = n
-    directions.pop(idx)
-    tangents.pop(idx)
+    idx = None
+    prev_delta = x_prev - x_singular
+    prev_norm = lg.norm(prev_delta)
+    if np.isfinite(prev_norm) and prev_norm > 0.0:
+        for n in range(len(directions)):
+            direction_delta = directions[n] - x_singular
+            direction_norm = lg.norm(direction_delta)
+            if not np.isfinite(direction_norm) or direction_norm == 0.0:
+                continue
+            inner_pd = np.dot(direction_delta, prev_delta) / (direction_norm * prev_norm)
+            if inner_pd > inner_prodct:
+                inner_prodct = inner_pd
+                idx = n
+    if idx is not None:
+        directions.pop(idx)
+        tangents.pop(idx)
     LOG.info(lambda: f'Branch Switching Tangents: {tangents}')
 
     # Returning 3 continuation directions
