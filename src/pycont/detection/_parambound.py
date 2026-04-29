@@ -64,7 +64,7 @@ def localizeParameterBoundary(
             u_refined = quiet_newton_krylov(objective, u_guess, rdiff=rdiff, f_tol=tolerance)
     except opt.NoConvergence as e:
         u_refined = e.args[0]
-    except (ValueError, RuntimeError, OverflowError) as e:
+    except (ValueError, RuntimeError, OverflowError, ZeroDivisionError) as e:
         LOG.info(lambda: f"{label} localization refinement failed ({type(e).__name__}). Using interpolated boundary state instead.")
         return u_guess
 

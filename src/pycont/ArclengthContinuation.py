@@ -11,6 +11,21 @@ from ._optimize import quiet_newton_krylov
 
 from typing import Callable, Tuple, Dict, Any, List
 
+def _all_finite(x: np.ndarray | float) -> bool:
+	return bool(np.all(np.isfinite(np.asarray(x))))
+
+def _residual_norm_or_inf(F: Callable[[np.ndarray], np.ndarray], x: np.ndarray) -> float:
+	with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
+		try:
+			residual = F(x)
+		except (ValueError, RuntimeError, FloatingPointError, OverflowError, ZeroDivisionError):
+			return np.inf
+	try:
+		residual_norm = lg.norm(residual)
+	except (ValueError, RuntimeError, FloatingPointError, OverflowError, ZeroDivisionError):
+		return np.inf
+	return float(residual_norm) if np.isfinite(residual_norm) else np.inf
+
 def continuation(G : Callable[[np.ndarray, float], np.ndarray], 
                  u0 : np.ndarray, 
                  p0 : float, 
@@ -111,14 +126,17 @@ def continuation(G : Callable[[np.ndarray, float], np.ndarray],
 			# Corrector
 			with np.errstate(over='ignore', under='ignore', divide='ignore', invalid='ignore'):
 				LOG.verbose('computing newton')
+				x_new = None
 				try:
 					x_new = quiet_newton_krylov(F, x_p, f_tol=a_tol, rdiff=r_diff, maxiter=max_it)
 				except opt.NoConvergence as e:
 					x_new = e.args[0]
-			nk_residual = lg.norm(F(x_new))
+				except (ValueError, RuntimeError, FloatingPointError, OverflowError, ZeroDivisionError) as e:
+					LOG.verbose(lambda: f'Newton-Krylov corrector failed ({type(e).__name__}).')
+			nk_residual = _residual_norm_or_inf(F, x_new) if x_new is not None and _all_finite(x_new) else np.inf
 			
 			# Check the residual to increase or decrease ds
-			if np.all(np.isfinite(nk_residual)) and nk_residual <= 10.0 * nk_tolerance:
+			if np.isfinite(nk_residual) and nk_residual <= 10.0 * nk_tolerance:
 				ds = min(1.2*ds, ds_max)
 				break
 			else:
